@@ -23,8 +23,5 @@ if __name__=="__main__":
         app=App_main([Bridge(), Bridge()])
         app.start()
 
-    #except KeyboardInterrupt:
-        #print("Shutting from terminal")
-
     except Exception as e:
         print(f"Encountered exception: {e}")
