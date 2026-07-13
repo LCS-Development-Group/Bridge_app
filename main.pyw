@@ -20,7 +20,7 @@ def setup():
 if __name__=="__main__":
     setup()
     try:
-        app=App_main([Bridge(), Bridge()])
+        app=App_main()
         app.start()
 
     except Exception as e:
