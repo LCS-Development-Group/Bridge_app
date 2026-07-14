@@ -20,7 +20,7 @@ color_nconnected="#d10000"
 color_connected="#32cd32"
 
 COM_port_list=[DEFAULT_COM_MSG]
-app_icon_path_ico="./Icon128.ico"
+app_icon_path_ico="./icons/app.ico"
 
 FONTS={}
 
