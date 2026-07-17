@@ -7,6 +7,9 @@ from enum import Enum
 
 BAUDRATE=115200
 
+MQTT_BROKER_IP="LCSRP5"
+MQTT_BROKER_PORT=1883
+
 class Bridge_UART_state(Enum):
     connected="Connected"
     not_connected="Not connected"
@@ -17,11 +20,14 @@ class Bridge_CMDs(Enum):
     DISCONNECT_UART="dis"
     STOP="stp"
     SEND_UART="snd"
+    SET_ADV="adv"
 
 class Bridge_EVs(Enum):
     ERROR="ERR"
     UART_CON_STATUS="UCS"
     UART_CON_ID="UCI"
+    UART_TRAFFIC_RECEIVE="UTR"
+    MQTT_TRAFFIC_RECEIVE="MTR"
 
 handshake_rq={
     "JT":"hsk",
@@ -32,7 +38,6 @@ handshake_goodbye={
     "JT":"hsk",
     "RQ":"unc"
 }
-
 
 class Bridge:
     def __init__(self, channel_id):
@@ -53,6 +58,7 @@ class Bridge:
         self.mqtt_connected=False
         self.cham_connected=False
         self.chamber_id=None
+        self.adv=False
 
     def start(self):
         self.cmd_thread.start()
@@ -72,6 +78,8 @@ class Bridge:
                     case Bridge_CMDs.STOP:
                         self.stop_event.set()
                         self.uart_open_event.set()
+                    case Bridge_CMDs.SET_ADV:
+                        self.adv=value
             finally:
                 self.command_queue.task_done()   
         self.__close_uart()
@@ -128,11 +136,18 @@ class Bridge:
                     self.command_queue.put((Bridge_CMDs.DISCONNECT_UART, None))
 
     def __process_json_from_uart(self, payload):
-        json_type=payload.pop("JT", None)
+        json_type=payload["JT"]
         
         match json_type:
             case "hsk":
                 self.__process_handshake(payload)
+                return
+            
+        if self.adv:
+            event_val=json.dumps(payload)
+        else:
+            event_val=None
+        self.event_queue.put((Bridge_EVs.UART_TRAFFIC_RECEIVE, event_val))
 
     def __open_uart(self, port):  
         try:
@@ -184,3 +199,6 @@ class Bridge:
         self.command_queue.put((Bridge_CMDs.SEND_UART, payload))
     def cmd_stop(self):
         self.command_queue.put((Bridge_CMDs.STOP, None))
+    def cmd_set_adv(self, adv:bool=False):
+        self.command_queue.put((Bridge_CMDs.SET_ADV, adv))
+

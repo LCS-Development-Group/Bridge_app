@@ -20,10 +20,12 @@ color_select="#8B0000"
 color_tilein="#4D4D4D"
 
 '''icons'''
-ICON_QUESTION="./icons/question.ico"
-ICON_WARNING="./icons/warning.ico"
-ICON_ERROR="./icons/error.ico"
-ICON_INFO="./icons/info.ico"
+from pathlib import Path
+app_base_path=Path(__file__).resolve().parent
+ICON_QUESTION=f"{app_base_path}/icons/question.ico"
+ICON_WARNING=f"{app_base_path}/icons/warning.ico"
+ICON_ERROR=f"{app_base_path}/icons/error.ico"
+ICON_INFO=f"{app_base_path}/icons/info.ico"
 
 '''credit
 https://www.iconarchive.com/show/button-icons-by-hopstarter/Button-Help-icon.html
@@ -53,7 +55,7 @@ class Messagebox(ctk.CTkToplevel):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.font_button=ctk.CTkFont(family="Tahoma", size=10, weight="bold")
-        self.font_big=ctk.CTkFont(family="Tahoma", size=16)
+        self.font_big=ctk.CTkFont(family="Tahoma", size=12)
 
         icon=None
         match type:

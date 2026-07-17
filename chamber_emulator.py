@@ -30,6 +30,7 @@ class Emulator():
         self.sm=serial.Serial()
         self.sm.dtr=False
         self.sm.rts=False
+        self.sm.timeout=1
 
         self.sm.port=UART_PORT
         self.sm.baudrate=BAUDRATE
@@ -101,6 +102,10 @@ class Emulator():
     
         finally:
             self.sender_stop.set()
+
+            if hasattr(self, "sender"):
+                self.sender.join(timeout=1)
+
             self.disconect()
 
 
