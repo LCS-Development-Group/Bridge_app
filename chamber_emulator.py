@@ -3,9 +3,7 @@ import json
 import sys
 import threading
 
-UART_PORT=sys.argv[1]
 BAUDRATE=115200
-CHAMBER_ID=sys.argv[2]
 SEND_PERIOD_S=1
 
 readings={
@@ -21,19 +19,20 @@ readings={
 
 handshake={
     "JT":"hsk",
-    "ID": CHAMBER_ID,
+    "ID": "",
     "RQ": "con"
 }
 
 class Emulator():
-    def __init__(self):
+    def __init__(self, uart_port: str, chamber_id: int):
         self.sm=serial.Serial()
         self.sm.dtr=False
         self.sm.rts=False
         self.sm.timeout=1
 
-        self.sm.port=UART_PORT
+        self.sm.port=uart_port
         self.sm.baudrate=BAUDRATE
+        handshake["ID"]=chamber_id
         self.status="unc" #to bridge not uart itself
 
         self.sender_stop=threading.Event()
@@ -111,8 +110,11 @@ class Emulator():
 
 if __name__=="__main__":
     try:
-        emulator=Emulator()
-        emulator.run()
+        if len(sys.argv)!=3:
+            print(f"Usage: py ./chamber_emulator.py <Uart_port> <Chamber_ID>")
+        else:
+            emulator=Emulator(sys.argv[1], sys.argv[2])
+            emulator.run()
 
     except Exception as e:
         print(f"Encountered exception: {e}")

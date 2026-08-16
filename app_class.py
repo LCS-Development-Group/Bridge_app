@@ -27,31 +27,52 @@ COM_port_list=[DEFAULT_COM_MSG]
 from pathlib import Path
 app_base_path=Path(__file__).resolve().parent
 app_icon_path_ico=f"{app_base_path}/icons/app.ico"
-
+adv_icon_path_ico=f"{app_base_path}/icons/info.ico"
 FONTS={}
 
 class App_main:
     def __init__(self):
         ctk.set_appearance_mode("system")
+        
+        '''Main window'''
         self.win=ctk.CTk()
-
-        #self.win.geometry("600x400")
-        self.win.resizable(False, False)   
+        self.win.resizable(False, False)    
         self.win.title("LCS Bridge")     
         self.win.protocol("WM_DELETE_WINDOW", self.handle_win_close)
-        self.__set_app_icon()
-        self.__setup_fonts()
+        try:
+            self.win.wm_iconbitmap(app_icon_path_ico)
+        except Exception as e:
+            print(f"Exeption in icon setting: {e}")
         self.win.grid_columnconfigure(0, weight=1, uniform="panels")
         self.win.grid_columnconfigure(1, weight=1, uniform="panels")
         self.win.grid_rowconfigure(0, weight=0)#debug
         self.win.grid_rowconfigure(1, weight=0)#labels
         self.win.grid_rowconfigure(2, weight=1)#panel body
-        self.panel=[
-            Ctrl_panel(app=self, win=self.win, bridge=bc.Bridge(channel_id=0), panel_id=0),
-            Ctrl_panel(app=self, win=self.win, bridge=bc.Bridge(channel_id=1), panel_id=1)
-        ]
-        self.__refresh_COM_event_cb()
 
+        '''Advanced window'''
+        self.adv_win=ctk.CTkToplevel(self.win)
+        self.adv_win.resizable(True, False)    
+        self.adv_win.title("Advanced Info")
+        self.adv_win.protocol("WM_DELETE_WINDOW", self.__handle_adv_win_close)
+        try:
+            self.adv_win.wm_iconbitmap(adv_icon_path_ico)
+        except Exception as e:
+            print(f"Exeption in icon setting: {e}")
+        self.adv_win.grid_columnconfigure(0, weight=1, uniform="panels")
+        self.adv_win.grid_columnconfigure(1, weight=1, uniform="panels")
+        self.adv_win.grid_rowconfigure(0, weight=0)#labels
+        self.adv_win.grid_rowconfigure(1, weight=1)#panel body
+
+        self.__setup_fonts()
+
+        '''Pannels'''
+        self.panel=[
+            Ctrl_panel(app=self, win=self.win, adv_win=self.adv_win, bridge=bc.Bridge(channel_id=0), panel_id=0),
+            Ctrl_panel(app=self, win=self.win, adv_win=self.adv_win, bridge=bc.Bridge(channel_id=1), panel_id=1)
+        ]
+        self.__adv_set_enabled(False)
+
+        self.__refresh_COM_event_cb()
         self.refresh_COM_btn=ctk.CTkButton(self.win, 
             text="Refresh COM", 
             font=FONTS["Small"], 
@@ -69,7 +90,6 @@ class App_main:
             hover_color=color_select,
             border_color=color_tilein)
         self.adv_checkbox.grid(row=0, column=0, sticky="nw", padx=10, pady=(10, 0))
-        self.adv=True
 
     def __refresh_COM_event_cb(self):
         global COM_port_list 
@@ -82,12 +102,23 @@ class App_main:
 
 
     def __adv_checkbox_event_cb(self):
-        self.adv=(self.adv_checkbox_var.get()=='1')
-            
-        self.panel[0].bridge.cmd_set_adv(self.adv)
-        self.panel[1].bridge.cmd_set_adv(self.adv)
-        self.panel[0].set_adv_visible(self.adv)
-        self.panel[1].set_adv_visible(self.adv)
+        self.__adv_set_enabled(self.adv_checkbox_var.get()=='1')
+        
+    def __adv_set_enabled(self, enabled=False):
+        self.adv_enabled=enabled
+        self.panel[0].set_adv_enabled(self.adv_enabled)
+        self.panel[1].set_adv_enabled(self.adv_enabled)
+        
+        if self.adv_win.winfo_exists():
+            if enabled:
+                self.adv_win.deiconify()
+                self.adv_win.lift()
+                self.adv_win.attributes('-topmost', True)
+                self.adv_win.after(100, lambda: self.adv_win.attributes('-topmost', False))
+                self.adv_win.focus_force()
+            else:
+                self.adv_win.withdraw()
+
         self.win.update_idletasks()
 
     def __setup_fonts(self):
@@ -95,18 +126,17 @@ class App_main:
         FONTS["Small"]=ctk.CTkFont(family="Tahoma", size=12)
         FONTS["Small_bold"]=ctk.CTkFont(family="Tahoma", size=12, weight="bold")
         FONTS["tiny"]=self.font_button=ctk.CTkFont(family="Tahoma", size=8)
-
-    def __set_app_icon(self):
-        try:
-            self.win.wm_iconbitmap(app_icon_path_ico)
-
-        except Exception as e:
-            print(f"Exeption in icon setting: {e}")
+        
     
     def handle_win_close(self):
         for panel in self.panel:
             panel.bridge.cmd_stop()
+        self.adv_win.destroy()
         self.win.destroy()
+
+    def __handle_adv_win_close(self):
+        self.adv_checkbox_var.set('0')
+        self.__adv_set_enabled(False)
 
     def start(self):
         try:
@@ -132,9 +162,10 @@ class Labels:
 
 
 class Ctrl_panel:
-    def __init__(self, app, win, bridge: bc.Bridge, panel_id: int):
+    def __init__(self, app, win, adv_win, bridge: bc.Bridge, panel_id: int):
         self.app=app
         self.win=win
+        self.adv_win=adv_win
         self.bridge=bridge
 
         self.bridge_state=bc.Bridge_UART_state.not_connected
@@ -155,8 +186,10 @@ class Ctrl_panel:
 
         self.__setup_widgets()
         self.__setup_adv_widgets()
-        self.set_adv_visible(False)
         self.__poll_event_queue()
+
+    def set_adv_enabled(self, adv_enabled: bool=False):
+        self.bridge.cmd_set_adv(adv=adv_enabled)
 
     def __setup_widgets(self):
         self.body=ctk.CTkFrame(self.win, fg_color=color_tile)
@@ -209,15 +242,19 @@ class Ctrl_panel:
         self.labels.MQTT_rec_time.grid(row=5, column=1, padx=10, pady=(0, 5), sticky="nw")
         
     def __setup_adv_widgets(self):
-        self.adv_section=ctk.CTkFrame(self.win, fg_color=color_tile)
-        self.adv_section.grid(row=3, column=self.panel_id, sticky="new", padx=10, pady=(0, 10))
+
+        self.adv_label=ctk.CTkLabel(self.adv_win, text=f"Chamber {self.chamber_id}", font=FONTS["Heading"], text_color=color_text, height=34)
+        self.adv_label.grid(row=0, column=self.panel_id, padx=15, pady=(10, 0), sticky="w")
+
+        self.adv_section=ctk.CTkFrame(self.adv_win, fg_color=color_tile)
+        self.adv_section.grid(row=1, column=self.panel_id, sticky="new", padx=10, pady=10)
         self.adv_section.grid_columnconfigure(0, weight=1)
 
         #from chamber
         self.labels.traffic_from_chamber_text=ctk.CTkLabel(self.adv_section, text="Traffic from chamber", font=FONTS["Small_bold"], text_color=color_text)
         self.labels.traffic_from_chamber_text.grid(row=0, column=0, sticky="nw", padx=10, pady=(5, 0))
 
-        self.traffic_from_chamber_terminal=ctk.CTkTextbox(self.adv_section, font=FONTS["tiny"], height=100, text_color=color_text)
+        self.traffic_from_chamber_terminal=ctk.CTkTextbox(self.adv_section, font=FONTS["tiny"], height=150, width=400, text_color=color_text)
         self.traffic_from_chamber_terminal.grid(row=1, column=0, sticky="new", padx=10, pady=(0, 10))
         self.traffic_from_chamber_terminal.configure(state="disabled")
 
@@ -225,11 +262,9 @@ class Ctrl_panel:
         self.labels.traffic_from_server_text=ctk.CTkLabel(self.adv_section, text=f"Traffic from server ({MQTT_BROKER_HEADER})", font=FONTS["Small_bold"], text_color=color_text)
         self.labels.traffic_from_server_text.grid(row=2, column=0, sticky="nw", padx=10, pady=(5, 0))
 
-        self.traffic_from_server_terminal=ctk.CTkTextbox(self.adv_section, font=FONTS["tiny"], height=100, text_color=color_text)
+        self.traffic_from_server_terminal=ctk.CTkTextbox(self.adv_section, font=FONTS["tiny"], height=150, width=400, text_color=color_text)
         self.traffic_from_server_terminal.grid(row=3, column=0, sticky="new", padx=10, pady=(0, 10))
         self.traffic_from_server_terminal.configure(state="disabled")
-
-        
 
     def write_terminal_server(self, text: str):
         if text==None:
@@ -240,6 +275,7 @@ class Ctrl_panel:
         self.traffic_from_server_terminal.configure(state="disabled")
 
     def write_terminal_chamber(self, text: str, timestamp: str):
+        print(text)
         if text==None:
             return
         self.traffic_from_chamber_terminal.configure(state="normal")
@@ -258,13 +294,6 @@ class Ctrl_panel:
             self.traffic_from_chamber_terminal.see("end")
         self.traffic_from_chamber_terminal.configure(state="disabled")
 
-
-    def set_adv_visible(self, visible=True):
-        if visible:
-            self.adv_section.grid()
-        else:
-            self.adv_section.grid_remove()
-
     def __COM_change_cb(self, choice):
         if self.bridge_state==bc.Bridge_UART_state.connected:
             self.bridge.cmd_disconnect_chamber()
@@ -275,6 +304,7 @@ class Ctrl_panel:
         self.selected_COM=choice
 
     def __connect_btn_event_callback(self):
+        self.connect_abort_timer=None
         match self.bridge_state:
             case bc.Bridge_UART_state.connected:
                 self.bridge.cmd_disconnect_chamber()
@@ -302,12 +332,13 @@ class Ctrl_panel:
         self.bridge.cmd_connect_chamber(self.selected_COM)
         self.connect_abort_timer=self.win.after(2000, self.__abort_connect_timer_cb)
 
-    def __abort_connect(self):
+    def __abort_connect(self, send_disconect_cmd=True):
         self.bridge_state=bc.Bridge_UART_state.not_connected
         self.btn_connect.configure(text="Connect")
         self.labels.status.configure(text=self.bridge_state.value)
         self.labels.status.configure(text_color=color_nconnected)
-        self.bridge.cmd_disconnect_chamber()
+        if send_disconect_cmd:
+            self.bridge.cmd_disconnect_chamber()
 
     def __poll_event_queue(self):
         while True:
@@ -320,12 +351,16 @@ class Ctrl_panel:
                 case bc.Bridge_EVs.UART_CON_ID:
                     self.chamber_id=value
                     self.labels.chamber.configure(text=f"Chamber {self.chamber_id}")
+                    self.adv_label.configure(text=f"Chamber {self.chamber_id}")
                     self.MQTT_topic=f"/chambers/{self.chamber_id}/..."
                     self.labels.MQTT_topic.configure(text=self.MQTT_topic)
                 case bc.Bridge_EVs.UART_CON_STATUS:
                     self.bridge_state=value
                     self.labels.status.configure(text=self.bridge_state.value)
-                    self.win.after_cancel(self.connect_abort_timer)
+                    if self.connect_abort_timer is not None:
+                        self.win.after_cancel(self.connect_abort_timer)
+                        self.connect_abort_timer=None
+
                     match self.bridge_state:
                         case bc.Bridge_UART_state.connected:
                             self.btn_connect.configure(text="Disconect")
@@ -340,13 +375,17 @@ class Ctrl_panel:
                 case bc.Bridge_EVs.UART_TRAFFIC_RECEIVE:
                     self.last_UART_receive=datetime.now().strftime("%H:%M:%S.%f")[:-3]
                     self.labels.UART_rec_time.configure(text=self.last_UART_receive)
-                    if self.app.adv:
+                    if self.app.adv_enabled:
                         self.write_terminal_chamber(value, timestamp=self.last_UART_receive)
 
                 case bc.Bridge_EVs.MQTT_TRAFFIC_RECEIVE:
                     self.last_MQTT_receive=datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
                 case bc.Bridge_EVs.ERROR:
+                    if self.connect_abort_timer is not None:
+                        self.win.after_cancel(self.connect_abort_timer)
+                        self.connect_abort_timer=None
+                        self.__abort_connect()
                     custom_Messagebox.show(parent=self.win, title=f"Bridge{self.panel_id} error", type='E', message=value, buttons=("OK",))
 
             self.bridge.event_queue.task_done()

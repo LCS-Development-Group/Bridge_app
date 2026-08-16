@@ -70,9 +70,18 @@ class Messagebox(ctk.CTkToplevel):
         if icon:
             self.after(200, lambda: self.iconbitmap(icon))
         
-
-        msg_label=ctk.CTkLabel(self, text=message, wraplength=width-40, justify="left", font=self.font_big, text_color=color_text)
+        msg_label=ctk.CTkTextbox(self, 
+            width=width-20, 
+            font=self.font_big, 
+            text_color=color_text, 
+            bg_color="transparent",
+            fg_color="transparent",
+            border_width=0,
+            activate_scrollbars=False)
+        msg_label.insert("0.0", text=message)
         msg_label.grid(row=0, column=0, padx=10, pady=(5, 20), sticky="nw")
+        msg_label.configure(state="disabled")
+
         btn_frame=ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="e")
 
