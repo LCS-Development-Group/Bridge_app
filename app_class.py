@@ -1,11 +1,11 @@
 import customtkinter as ctk
-from tkinter import PhotoImage
 import bridge_class as bc
 from serial.tools import list_ports
-from types import SimpleNamespace
 import queue
 from datetime import datetime
 import custom_Messagebox
+import sys
+
 
 DEFAULT_COM_MSG="Select COM"
 MQTT_BROKER_HEADER=f"{bc.MQTT_BROKER_IP}:{bc.MQTT_BROKER_PORT}"
@@ -30,6 +30,17 @@ app_icon_path_ico=f"{app_base_path}/icons/app.ico"
 adv_icon_path_ico=f"{app_base_path}/icons/info.ico"
 FONTS={}
 
+def set_window_icon(window, icon_path):
+    import os
+    if not os.path.exists(icon_path):
+        return
+
+    try:
+            window.wm_iconbitmap(icon_path)
+    except Exception:
+        pass
+
+    
 class App_main:
     def __init__(self):
         ctk.set_appearance_mode("system")
@@ -39,10 +50,9 @@ class App_main:
         self.win.resizable(False, False)    
         self.win.title("LCS Bridge")     
         self.win.protocol("WM_DELETE_WINDOW", self.handle_win_close)
-        try:
-            self.win.wm_iconbitmap(app_icon_path_ico)
-        except Exception as e:
-            print(f"Exeption in icon setting: {e}")
+
+        set_window_icon(self.win, app_icon_path_ico)
+    
         self.win.grid_columnconfigure(0, weight=1, uniform="panels")
         self.win.grid_columnconfigure(1, weight=1, uniform="panels")
         self.win.grid_rowconfigure(0, weight=0)#debug
@@ -51,13 +61,13 @@ class App_main:
 
         '''Advanced window'''
         self.adv_win=ctk.CTkToplevel(self.win)
+        self.adv_win.withdraw()
         self.adv_win.resizable(True, False)    
         self.adv_win.title("Advanced Info")
         self.adv_win.protocol("WM_DELETE_WINDOW", self.__handle_adv_win_close)
-        try:
-            self.adv_win.wm_iconbitmap(adv_icon_path_ico)
-        except Exception as e:
-            print(f"Exeption in icon setting: {e}")
+
+        set_window_icon(self.adv_win, adv_icon_path_ico)
+
         self.adv_win.grid_columnconfigure(0, weight=1, uniform="panels")
         self.adv_win.grid_columnconfigure(1, weight=1, uniform="panels")
         self.adv_win.grid_rowconfigure(0, weight=0)#labels
@@ -82,7 +92,7 @@ class App_main:
             hover_color=color_select)
         self.refresh_COM_btn.grid(row=0, column=1, sticky="ne", padx=10, pady=(10, 0))
 
-        self.adv_checkbox_var=ctk.StringVar(value='0')
+        self.adv_checkbox_var=ctk.BooleanVar(value=False)
         self.adv_checkbox=ctk.CTkCheckBox(self.win, 
             text="Advanced view",font=FONTS["Small"], 
             variable=self.adv_checkbox_var, 
@@ -95,6 +105,8 @@ class App_main:
         global COM_port_list 
         COM_port_list=[DEFAULT_COM_MSG]
         for port in list_ports.comports():
+            if sys.platform.startswith("linux") and port.device.startswith("/dev/ttyS"):
+                continue
             COM_port_list.append(port.device)
             
         self.panel[0].COM_dropdown.configure(values=COM_port_list)
@@ -102,7 +114,7 @@ class App_main:
 
 
     def __adv_checkbox_event_cb(self):
-        self.__adv_set_enabled(self.adv_checkbox_var.get()=='1')
+        self.__adv_set_enabled(self.adv_checkbox_var.get()==True)
         
     def __adv_set_enabled(self, enabled=False):
         self.adv_enabled=enabled
@@ -135,7 +147,7 @@ class App_main:
         self.win.destroy()
 
     def __handle_adv_win_close(self):
-        self.adv_checkbox_var.set('0')
+        self.adv_checkbox_var.set(False)
         self.__adv_set_enabled(False)
 
     def start(self):
@@ -337,8 +349,14 @@ class Ctrl_panel:
         self.btn_connect.configure(text="Connect")
         self.labels.status.configure(text=self.bridge_state.value)
         self.labels.status.configure(text_color=color_nconnected)
+        self.__cancel_abort_timer()
         if send_disconect_cmd:
             self.bridge.cmd_disconnect_chamber()
+
+    def __cancel_abort_timer(self):
+        if self.connect_abort_timer is not None:
+            self.win.after_cancel(self.connect_abort_timer)
+            self.connect_abort_timer=None
 
     def __poll_event_queue(self):
         while True:
@@ -357,20 +375,17 @@ class Ctrl_panel:
                 case bc.Bridge_EVs.UART_CON_STATUS:
                     self.bridge_state=value
                     self.labels.status.configure(text=self.bridge_state.value)
-                    if self.connect_abort_timer is not None:
-                        self.win.after_cancel(self.connect_abort_timer)
-                        self.connect_abort_timer=None
 
                     match self.bridge_state:
                         case bc.Bridge_UART_state.connected:
+                            self.__cancel_abort_timer()
                             self.btn_connect.configure(text="Disconect")
                             self.labels.status.configure(text_color=color_connected)
                         case bc.Bridge_UART_state.not_connected:
                             self.btn_connect.configure(text="Connect")
                             self.labels.status.configure(text_color=color_nconnected)
                         case bc.Bridge_UART_state.connecting:
-                            self.btn_connect.configure(text="Connecting")
-                            self.labels.status.configure(text_color=color_text)
+                            pass #attemp, connect handles it
 
                 case bc.Bridge_EVs.UART_TRAFFIC_RECEIVE:
                     self.last_UART_receive=datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -382,10 +397,8 @@ class Ctrl_panel:
                     self.last_MQTT_receive=datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
                 case bc.Bridge_EVs.ERROR:
-                    if self.connect_abort_timer is not None:
-                        self.win.after_cancel(self.connect_abort_timer)
-                        self.connect_abort_timer=None
-                        self.__abort_connect()
+                    self.__cancel_abort_timer()
+                    self.__abort_connect()
                     custom_Messagebox.show(parent=self.win, title=f"Bridge{self.panel_id} error", type='E', message=value, buttons=("OK",))
 
             self.bridge.event_queue.task_done()

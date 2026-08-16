@@ -1,0 +1,8 @@
+customtkinter==6.0.0
+darkdetect==0.8.0
+future==1.0.0
+iso8601==2.1.0
+packaging==26.3
+paho-mqtt==2.1.0
+pyserial==3.5
+PyYAML==6.0.3

@@ -27,6 +27,16 @@ ICON_WARNING=f"{app_base_path}/icons/warning.ico"
 ICON_ERROR=f"{app_base_path}/icons/error.ico"
 ICON_INFO=f"{app_base_path}/icons/info.ico"
 
+def set_window_icon(window, icon_path):
+    import os
+    if not os.path.exists(icon_path):
+        return
+
+    try:
+            window.wm_iconbitmap(icon_path)
+    except Exception:
+        pass
+
 '''credit
 https://www.iconarchive.com/show/button-icons-by-hopstarter/Button-Help-icon.html
 https://www.iconarchive.com/show/button-icons-by-hopstarter/Button-Info-icon.html
@@ -68,7 +78,7 @@ class Messagebox(ctk.CTkToplevel):
             case 'W':
                 icon=ICON_WARNING
         if icon:
-            self.after(200, lambda: self.iconbitmap(icon))
+            self.after(200, lambda: set_window_icon(self, icon))
         
         msg_label=ctk.CTkTextbox(self, 
             width=width-20, 

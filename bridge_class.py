@@ -1,4 +1,3 @@
-import random
 import serial
 import threading
 import json
@@ -92,7 +91,11 @@ class Bridge:
             self.__read_uart()
 
     def __read_uart(self):
-        line=self.sm.readline()
+        try:
+            line=self.sm.readline()
+        except (serial.SerialException, OSError, TypeError):
+            return #triggered when bridge thread closes the port while reader is stuck on it
+
         if not line:
             return
         
