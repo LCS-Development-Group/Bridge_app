@@ -2,9 +2,12 @@ import serial
 import json
 import sys
 import threading
+import time
 
 BAUDRATE=115200
 SEND_PERIOD_S=1
+
+from bridge_class import Handshake_codes, make_handshake_json
 
 readings={
     "JT":"sen",
@@ -20,8 +23,30 @@ readings={
 handshake={
     "JT":"hsk",
     "ID": "",
-    "RQ": "con"
+    "RQ": Handshake_codes.CON_REQ.value
 }
+
+ping={
+    "JT":"hsk",
+    "ID": "",
+    "RQ": Handshake_codes.PING.value
+}
+
+regulator_settings={
+    "JT": "reg",
+    "SP": 25.0,
+    "HI": 5.0,
+    "EN": "OFF",
+    "ME": "OFF"
+}
+starter_settings={
+    "JT": "sta",
+    "SS": "OFF",
+    "LS": "OFF"
+}
+
+
+PING_COUNTER_MAX=5
 
 class Emulator():
     def __init__(self, uart_port: str, chamber_id: int):
@@ -33,79 +58,88 @@ class Emulator():
         self.sm.port=uart_port
         self.sm.baudrate=BAUDRATE
         handshake["ID"]=chamber_id
-        self.status="unc" #to bridge not uart itself
+        ping["ID"]=chamber_id
+        self.connected=False
 
         self.sender_stop=threading.Event()
         self.mutex=threading.Lock()
 
-    def connect(self):
+        self.ping_counter=0
+
+        #uart connect
         self.sm.open()
-        self.sm.reset_input_buffer()
-        self.sm.reset_output_buffer()
 
-
-    def disconect(self):
-        self.sm.reset_input_buffer()
-        self.sm.reset_output_buffer()
-        self.sm.close()
-
-    def answer_handhake(self, rq_payload):
-        if "RQ" in rq_payload:
-            handshake["RQ"]=rq_payload["RQ"]
-
-            self.status=handshake["RQ"]
-            payload=json.dumps(handshake)+"\n"
-            self.sm.write(payload.encode("utf-8"))
-            self.sm.flush()
-        
-    def sender_loop(self):
+    def __readings_loop(self):
+        #periodic send of readings
         while not self.sender_stop.wait(SEND_PERIOD_S) and not self.sender_stop.is_set():
-            with self.mutex:
-                if self.status=="con":
-                    payload=json.dumps(readings)+"\n"
-                    self.sm.write(payload.encode("utf-8"))
-                    self.sm.flush()
+            if not self.connected:
+                continue
+
+            self.__write(readings)
+            self.ping_counter+=1
+            if self.ping_counter>=PING_COUNTER_MAX:
+                self.ping_counter=0
+                ping["RQ"]=Handshake_codes.PING.value
+                self.__write(ping)
+
+    def __main_loop(self):
+        #reading and responses
+        while self.sm.is_open:
+            line=self.sm.readline()
+
+            if not line:
+                continue
+            
+            print(line)
+
+            try:
+                payload:dict=json.loads(line.decode("utf-8", errors="ignore").strip())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+
+            match payload.get("JT"):
+                case "hsk":
+                    match payload.get("RQ"):
+                        case Handshake_codes.CON_REQ.value:
+                            self.connected=True
+                            handshake["RQ"]=Handshake_codes.CON_REQ.value
+                            self.__write(handshake)
+
+                        case Handshake_codes.DIS_REQ.value:
+                            self.connected=False
+
+                        case Handshake_codes.PONG.value:
+                            pass # answer to ping, real chamber will have a watchdog on that
+
+                case "sta":
+                    starter_settings.update(payload)
+                    self.__write(starter_settings)
+                    print(f"[starter] {starter_settings}\n")
+
+                case "reg":
+                    regulator_settings.update(payload)
+                    self.__write(regulator_settings)
+                    print(f"[regulator] {regulator_settings}\n")
+
+
+    def __write(self, payload:dict):
+        data=(json.dumps(payload)+"\n").encode("utf-8")
+        with self.mutex:
+            if self.sm.is_open:
+                self.sm.write(data)
+                self.sm.flush()
 
     def run(self):
+        threading.Thread(target=self.__readings_loop, daemon=True).start()
         try:
-            self.connect()
-            self.answer_handhake(handshake) #anouncement at boot
-            self.sender=threading.Thread(target=self.sender_loop)
-            self.sender.start()
-
-            while self.sm and self.sm.is_open:
-                line=self.sm.readline()
-                if not line:
-                    continue
-
-                decoded=line.decode("utf-8", errors='ignore').strip()
-                if not decoded:
-                    continue
-
-                try:
-                    payload=json.loads(decoded)
-                except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                    print(f"parse error: {e} | Raw: {line}")
-                    continue
-
-                if "JT" in payload:
-                    if payload["JT"]=="hsk":
-                        with self.mutex:
-                            self.answer_handhake(rq_payload=payload)
-
+            self.__main_loop()
         except KeyboardInterrupt:
-            print("Shutting from terminal")
-
-        except Exception as e:
-            print(f"Encountered exception: {e}")
-    
+            pass
         finally:
             self.sender_stop.set()
-
-            if hasattr(self, "sender"):
-                self.sender.join(timeout=1)
-
-            self.disconect()
+            time.sleep(2)
+            self.sm.close()
+    
 
 
 if __name__=="__main__":
@@ -113,7 +147,7 @@ if __name__=="__main__":
         if len(sys.argv)!=3:
             print(f"Usage: py ./chamber_emulator.py <Uart_port> <Chamber_ID>")
         else:
-            emulator=Emulator(sys.argv[1], sys.argv[2])
+            emulator=Emulator(sys.argv[1], int(sys.argv[2]))
             emulator.run()
 
     except Exception as e:

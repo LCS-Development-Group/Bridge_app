@@ -3,10 +3,18 @@ import threading
 import json
 import queue
 from enum import Enum
+import paho.mqtt.client as mqtt
+import os
+import time
 
+WATCHDOG_TIME=10.0
 BAUDRATE=115200
 
-MQTT_BROKER_IP="LCSRP5"
+if os.name.startswith("win"):
+    MQTT_BROKER_IP="LCSRP5"
+else:
+    MQTT_BROKER_IP="LCSRP5.local"#just linux things
+
 MQTT_BROKER_PORT=1883
 
 class Bridge_UART_state(Enum):
@@ -28,15 +36,128 @@ class Bridge_EVs(Enum):
     UART_TRAFFIC_RECEIVE="UTR"
     MQTT_TRAFFIC_RECEIVE="MTR"
 
-handshake_rq={
-    "JT":"hsk",
-    "RQ":"con"
-}
+class Handshake_codes(Enum):
+    CON_REQ="con"
+    DIS_REQ="dis"
+    PING="png"
+    PONG="alv"
+def make_handshake_json(code:Handshake_codes) -> dict:
+    return {"JT":"hsk", "RQ":code.value}
 
-handshake_goodbye={
-    "JT":"hsk",
-    "RQ":"unc"
+'''
+REFERENCE
+readings={
+    "JT":"sen",
+    "HI":0.0,
+    "TI":0.0,
+    "HE":0.0,
+    "TE":0.0,
+    "MC":0.0,
+    "MV":0.0,
+    "MP":0.0,
 }
+regulator_settings={
+    "SP": 25.0,
+    "HI": 5.0,
+    "EN": "OFF",
+    "ME": "OFF"
+}
+starter_settings={
+    "SS": "OFF",
+    "LS": "OFF"
+}
+'''
+
+
+class MQTT_topics:
+    def __init__(self):
+        '''this script listens to set, and answears to get'''
+        self.regulator_get=""
+        self.regulator_set=""
+        self.starter_get=""
+        self.starter_set=""
+        self.readings=""
+
+    def generate_topics(self, chamber_id:int):
+        self.regulator_get=f"chambers/{chamber_id}/regulator/get"
+        self.regulator_set=f"chambers/{chamber_id}/regulator/set"
+        self.starter_get=f"chambers/{chamber_id}/starter/get"
+        self.starter_set=f"chambers/{chamber_id}/starter/set"
+        self.readings=f"chambers/{chamber_id}/readings"
+
+
+
+
+class MQTT_CLient:
+    def __init__(self, brige_inst:"Bridge"):
+        self.client=mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        self.topics=MQTT_topics()
+        self.bridge=brige_inst
+
+    def connect_mqtt(self, chamber_id:int):
+        if self.client.is_connected():
+            self.disconnect_mqtt()
+
+        self.topics.generate_topics(chamber_id=chamber_id)
+
+        self.client.message_callback_add(self.topics.regulator_set, self.__regulator_from_server_cb)
+        self.client.message_callback_add(self.topics.starter_set, self.__starter_from_server_cb)
+
+        self.client.connect(host=MQTT_BROKER_IP, port=MQTT_BROKER_PORT, keepalive=60)
+        self.client.loop_start()
+
+        self.client.subscribe([(self.topics.regulator_set,0), (self.topics.starter_set,0)])
+
+    def disconnect_mqtt(self):
+        try:
+            self.client.loop_stop()
+        except Exception:
+            pass
+
+        if self.client.is_connected():
+            self.client.disconnect()
+
+        for topic in (self.topics.regulator_set, self.topics.starter_set):
+            if topic:
+                try:  
+                    self.client.message_callback_remove(topic)
+                except KeyError:
+                    pass
+            
+        
+
+    def __regulator_from_server_cb(self, client, userdata, msg):
+        try:
+            payload=json.loads(msg.payload.decode())
+            payload={"JT":"reg", **payload}#json type injection
+            
+            #just forward to esp
+            self.bridge.cmd_send_uart(payload)
+            if self.bridge.adv==True:
+                self.bridge.event_queue.put((Bridge_EVs.MQTT_TRAFFIC_RECEIVE, json.dumps(payload)))
+
+        except Exception as e:
+            print(f"json parse err: {e}")
+
+    def __starter_from_server_cb(self, client, userdata, msg):
+        try:
+            payload=json.loads(msg.payload.decode())
+            payload={"JT":"sta", **payload}#json type injection
+            
+            #WIP - no forward for now
+            #self.bridge.cmd_send_uart(payload)
+            if self.bridge.adv==True:
+                self.bridge.event_queue.put((Bridge_EVs.MQTT_TRAFFIC_RECEIVE, json.dumps(payload)))
+
+        except Exception as e:
+            print(f"json parse err: {e}")
+
+    def publish(self, topic:str, payload:dict|str):
+        if not topic or not payload:
+            return
+        data=json.dumps(payload) if isinstance(payload, dict) else payload
+        self.client.publish(topic, data, retain=True)
+    
 
 class Bridge:
     def __init__(self, channel_id):
@@ -50,18 +171,22 @@ class Bridge:
 
         self.cmd_thread=threading.Thread(target=self.__cmd_loop, daemon=True, name=f"bridge{self.channel_id}_cmd_thread")
         self.uart_thread=threading.Thread(target=self.__uart_loop, daemon=True, name=f"bridge{self.channel_id}_uart_thread")
-        self.sm=serial.Serial(baudrate=BAUDRATE, timeout=0.1)
+        self.sm=serial.Serial(baudrate=BAUDRATE, timeout=0.25)
         self.sm.dtr=False
         self.sm.rts=False 
 
-        self.mqtt_connected=False
         self.cham_connected=False
+        self.cham_disconnecting=False
         self.chamber_id=None
         self.adv=False
+        self.sm_rx_timestamp=0.0
+
+        self.mqtt=MQTT_CLient(brige_inst=self)
 
     def start(self):
         self.cmd_thread.start()
         self.uart_thread.start()
+
 
     def __cmd_loop(self):
         while not self.stop_event.is_set():
@@ -88,7 +213,14 @@ class Bridge:
             self.uart_open_event.wait()
             if self.stop_event.is_set():
                 return
+            
             self.__read_uart()
+
+            #watchdog
+            if self.cham_connected and not self.cham_disconnecting and (time.monotonic()-self.sm_rx_timestamp>WATCHDOG_TIME):
+                self.event_queue.put((Bridge_EVs.ERROR, f"LCS silent for >{WATCHDOG_TIME} -> autodisconnect"))
+                self.cham_disconnecting=True
+                self.cmd_disconnect_chamber()
 
     def __read_uart(self):
         try:
@@ -105,6 +237,9 @@ class Bridge:
 
         try:
             payload=json.loads(decoded)
+
+            self.sm_rx_timestamp=time.monotonic()
+
             self.__process_json_from_uart(payload)
         except json.JSONDecodeError as e:
             self.event_queue.put((Bridge_EVs.ERROR,f"JSON (from uart) parse: {e}"))
@@ -123,28 +258,72 @@ class Bridge:
         except (TypeError, ValueError, serial.SerialException) as e:
             self.event_queue.put((Bridge_EVs.ERROR, f"UART write: {e}"))
 
-    def __process_handshake(self, payload):
+    def __process_handshake(self, payload:dict):
         if "RQ" in payload:
-            request=payload["RQ"]
+            request=payload.get("RQ")
+            if not request:
+                return
+
+
+            '''
+                CON_REQ="con"
+                DIS_REQ="dis"
+                PING="png"
+                PONG="alv"
+            '''
             match request:
-                case "con":
+                case Handshake_codes.PING.value:
+                    if "ID" in payload:
+                        temp_id=payload["ID"]
+                        if temp_id!=self.chamber_id:
+                            self.event_queue.put((Bridge_EVs.ERROR, f"ping from LCS: chamber_id mismatch ({temp_id}vs{self.chamber_id}) -> autodisconnect"))
+                            self.command_queue.put((Bridge_CMDs.DISCONNECT_UART, None))
+                        else:
+                            self.cmd_send_uart(make_handshake_json(Handshake_codes.PONG))
+                    else:
+                        self.event_queue.put((Bridge_EVs.ERROR, "ping: no ID"))
+
+
+                case Handshake_codes.CON_REQ.value:
                     if "ID" in payload:
                         self.chamber_id=payload["ID"]
                         self.event_queue.put((Bridge_EVs.UART_CON_STATUS, Bridge_UART_state.connected))
                         self.event_queue.put((Bridge_EVs.UART_CON_ID, self.chamber_id))
                         self.cham_connected=True
+
+                        self.mqtt.connect_mqtt(self.chamber_id)
+
                     else:
-                        self.event_queue.put((Bridge_EVs.ERROR, f"handshake response: no ID"))
-                case "unc":
+                        self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
+
+
+                case Handshake_codes.DIS_REQ.value:
                     self.command_queue.put((Bridge_CMDs.DISCONNECT_UART, None))
 
-    def __process_json_from_uart(self, payload):
-        json_type=payload["JT"]
+                case Handshake_codes.PONG.value:
+                    #technically this should never be received
+                    pass
+
+    def __process_json_from_uart(self, payload:dict):
+        json_type=payload.get("JT")
+        if not json_type:
+            return
+
+        mqtt_payload={key: value for key,value in payload.items() if key!="JT"} #strip json type
         
         match json_type:
             case "hsk":
-                self.__process_handshake(payload)
-                return
+                self.__process_handshake(payload) #no need to do so here
+                #return
+            case "sen":
+                if self.cham_connected:
+                    self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload)
+            case "sta":
+                if self.cham_connected:
+                    self.mqtt.publish(self.mqtt.topics.starter_get, mqtt_payload)
+            case "reg":
+                if self.cham_connected:
+                    self.mqtt.publish(self.mqtt.topics.regulator_get, mqtt_payload)
             
         if self.adv:
             event_val=json.dumps(payload)
@@ -165,7 +344,7 @@ class Bridge:
 
             self.uart_open_event.set()
 
-            self.__write_uart(handshake_rq)
+            self.__write_uart(make_handshake_json(Handshake_codes.CON_REQ))
             self.event_queue.put((Bridge_EVs.UART_CON_STATUS, Bridge_UART_state.connecting))
 
 
@@ -177,7 +356,8 @@ class Bridge:
             self.uart_open_event.clear()
             if self.sm.is_open:
                 if send_goodbye and self.cham_connected:
-                    self.__write_uart(handshake_goodbye)
+                    self.__write_uart(make_handshake_json(Handshake_codes.DIS_REQ))
+                    time.sleep(0.05)
                     
                 self.sm.reset_input_buffer()
                 self.sm.reset_output_buffer()
@@ -187,7 +367,9 @@ class Bridge:
             self.event_queue.put((Bridge_EVs.ERROR, f"UART close: {e}"))
 
         finally:
+            self.mqtt.disconnect_mqtt()
             self.cham_connected=False
+            self.cham_disconnecting=False
             self.chamber_id=None
             self.event_queue.put((Bridge_EVs.UART_CON_STATUS, Bridge_UART_state.not_connected))
     

@@ -278,20 +278,30 @@ class Ctrl_panel:
         self.traffic_from_server_terminal.grid(row=3, column=0, sticky="new", padx=10, pady=(0, 10))
         self.traffic_from_server_terminal.configure(state="disabled")
 
-    def write_terminal_server(self, text: str):
+    def write_terminal_server(self, text: str, timestamp: str):
         if text==None:
             return
         self.traffic_from_server_terminal.configure(state="normal")
-        self.traffic_from_server_terminal.insert("end", f"MQTT) {text}\n")
-        self.traffic_from_server_terminal.see("end")
+        self.traffic_from_server_terminal.insert("end", f"[{timestamp}] {text}\n")
+
+        content=self.traffic_from_server_terminal.get("1.0", "end-1c")
+        line_count=len(content.splitlines())
+        while line_count>30:
+            self.traffic_from_server_terminal.delete("1.0", "2.0")
+            line_count-=1
+        
+        _, bottom=self.traffic_from_server_terminal.yview()
+        was_at_bottom=bottom>=0.9
+
+        if was_at_bottom:
+            self.traffic_from_server_terminal.see("end")
         self.traffic_from_server_terminal.configure(state="disabled")
 
     def write_terminal_chamber(self, text: str, timestamp: str):
-        print(text)
         if text==None:
             return
         self.traffic_from_chamber_terminal.configure(state="normal")
-        self.traffic_from_chamber_terminal.insert("end", f"[{timestamp}]  {text}\n")
+        self.traffic_from_chamber_terminal.insert("end", f"[{timestamp}] {text}\n")
 
         content=self.traffic_from_chamber_terminal.get("1.0", "end-1c")
         line_count=len(content.splitlines())
@@ -395,6 +405,8 @@ class Ctrl_panel:
 
                 case bc.Bridge_EVs.MQTT_TRAFFIC_RECEIVE:
                     self.last_MQTT_receive=datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    if self.app.adv_enabled:
+                        self.write_terminal_server(value, timestamp=self.last_UART_receive)
 
                 case bc.Bridge_EVs.ERROR:
                     self.__cancel_abort_timer()
