@@ -68,6 +68,10 @@ starter_settings={
 }
 '''
 
+CONN_STAT_PAYLOAD={
+    "ON":{"CS":"Online"},
+    "OFF":{"CS":"Offline"}
+}
 
 class MQTT_topics:
     def __init__(self):
@@ -77,6 +81,7 @@ class MQTT_topics:
         self.starter_get=""
         self.starter_set=""
         self.readings=""
+        self.conn_status=""
 
     def generate_topics(self, chamber_id:int):
         self.regulator_get=f"chambers/{chamber_id}/regulator/get"
@@ -84,7 +89,7 @@ class MQTT_topics:
         self.starter_get=f"chambers/{chamber_id}/starter/get"
         self.starter_set=f"chambers/{chamber_id}/starter/set"
         self.readings=f"chambers/{chamber_id}/readings"
-
+        self.conn_status=f"chambers/{chamber_id}/misc/conn_stat"
 
 
 
@@ -94,28 +99,41 @@ class MQTT_CLient:
         self.topics=MQTT_topics()
         self.bridge=brige_inst
 
-    def connect_mqtt(self, chamber_id:int):
+    def connect_mqtt(self, chamber_id:int)->bool:
         if self.client.is_connected():
             self.disconnect_mqtt()
 
-        self.topics.generate_topics(chamber_id=chamber_id)
+        try:
+            self.topics.generate_topics(chamber_id=chamber_id)
 
-        self.client.message_callback_add(self.topics.regulator_set, self.__regulator_from_server_cb)
-        self.client.message_callback_add(self.topics.starter_set, self.__starter_from_server_cb)
+            self.client.message_callback_add(self.topics.regulator_set, self.__regulator_from_server_cb)
+            self.client.message_callback_add(self.topics.starter_set, self.__starter_from_server_cb)
 
-        self.client.connect(host=MQTT_BROKER_IP, port=MQTT_BROKER_PORT, keepalive=60)
-        self.client.loop_start()
+            #status LWT
+            self.client.will_set(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), qos=1, retain=True)        
+            self.client.connect(host=MQTT_BROKER_IP, port=MQTT_BROKER_PORT, keepalive=60)
+            self.client.loop_start()
 
-        self.client.subscribe([(self.topics.regulator_set,0), (self.topics.starter_set,0)])
+            self.client.publish(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["ON"]), retain=True)
+            self.client.subscribe([(self.topics.regulator_set,0), (self.topics.starter_set,0)])
+
+        except Exception:
+            return False
+        return True
 
     def disconnect_mqtt(self):
         try:
+            wait=self.client.publish(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), retain=True)
+            wait.wait_for_publish(timeout=0.5)
+
+            if self.client.is_connected():
+                self.client.disconnect()
+
             self.client.loop_stop()
         except Exception:
             pass
 
-        if self.client.is_connected():
-            self.client.disconnect()
+    
 
         for topic in (self.topics.regulator_set, self.topics.starter_set):
             if topic:
@@ -152,11 +170,11 @@ class MQTT_CLient:
         except Exception as e:
             print(f"json parse err: {e}")
 
-    def publish(self, topic:str, payload:dict|str):
+    def publish(self, topic:str, payload:dict|str, retain:bool=True):
         if not topic or not payload:
             return
         data=json.dumps(payload) if isinstance(payload, dict) else payload
-        self.client.publish(topic, data, retain=True)
+        self.client.publish(topic, data, retain=retain)
     
 
 class Bridge:
@@ -275,7 +293,7 @@ class Bridge:
                 case Handshake_codes.PING.value:
                     if "ID" in payload:
                         temp_id=payload["ID"]
-                        if temp_id!=self.chamber_id:
+                        if self.chamber_id is not None and temp_id!=self.chamber_id:
                             self.event_queue.put((Bridge_EVs.ERROR, f"ping from LCS: chamber_id mismatch ({temp_id}vs{self.chamber_id}) -> autodisconnect"))
                             self.command_queue.put((Bridge_CMDs.DISCONNECT_UART, None))
                         else:
@@ -291,7 +309,9 @@ class Bridge:
                         self.event_queue.put((Bridge_EVs.UART_CON_ID, self.chamber_id))
                         self.cham_connected=True
 
-                        self.mqtt.connect_mqtt(self.chamber_id)
+                        if not self.mqtt.connect_mqtt(self.chamber_id):
+                            self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
+                            self.cmd_disconnect_chamber()
 
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
@@ -317,7 +337,7 @@ class Bridge:
                 #return
             case "sen":
                 if self.cham_connected:
-                    self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload)
+                    self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload, retain=False)
             case "sta":
                 if self.cham_connected:
                     self.mqtt.publish(self.mqtt.topics.starter_get, mqtt_payload)
