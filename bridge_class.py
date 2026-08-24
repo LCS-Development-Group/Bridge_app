@@ -41,6 +41,7 @@ class Handshake_codes(Enum):
     DIS_REQ="dis"
     PING="png"
     PONG="alv"
+    ACK="ack"
 def make_handshake_json(code:Handshake_codes) -> dict:
     return {"JT":"hsk", "RQ":code.value}
 
@@ -259,9 +260,10 @@ class Bridge:
             self.sm_rx_timestamp=time.monotonic()
 
             self.__process_json_from_uart(payload)
-        except json.JSONDecodeError as e:
-            self.event_queue.put((Bridge_EVs.ERROR,f"JSON (from uart) parse: {e}"))
-            return
+        except json.JSONDecodeError:
+            pass
+            #self.event_queue.put((Bridge_EVs.ERROR,f"JSON (from uart) parse: {e}"))
+            #return
 
     
     def __write_uart(self, payload):
@@ -303,6 +305,7 @@ class Bridge:
 
 
                 case Handshake_codes.CON_REQ.value:
+                    self.__write_uart(payload=make_handshake_json(Handshake_codes.ACK))
                     if "ID" in payload:
                         self.chamber_id=payload["ID"]
                         self.event_queue.put((Bridge_EVs.UART_CON_STATUS, Bridge_UART_state.connected))
@@ -312,7 +315,19 @@ class Bridge:
                         if not self.mqtt.connect_mqtt(self.chamber_id):
                             self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
                             self.cmd_disconnect_chamber()
+                    else:
+                        self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
+                case Handshake_codes.ACK.value:
+                    if "ID" in payload:
+                        self.chamber_id=payload["ID"]
+                        self.event_queue.put((Bridge_EVs.UART_CON_STATUS, Bridge_UART_state.connected))
+                        self.event_queue.put((Bridge_EVs.UART_CON_ID, self.chamber_id))
+                        self.cham_connected=True
+
+                        if not self.mqtt.connect_mqtt(self.chamber_id):
+                            self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
+                            self.cmd_disconnect_chamber()
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
