@@ -191,8 +191,9 @@ class Bridge:
         self.cmd_thread=threading.Thread(target=self.__cmd_loop, daemon=True, name=f"bridge{self.channel_id}_cmd_thread")
         self.uart_thread=threading.Thread(target=self.__uart_loop, daemon=True, name=f"bridge{self.channel_id}_uart_thread")
         self.sm=serial.Serial(baudrate=BAUDRATE, timeout=0.25)
-        self.sm.dtr=False
-        self.sm.rts=False 
+
+        self.sm.rts=False
+        self.sm.dts=True
 
         self.cham_connected=False
         self.cham_disconnecting=False
