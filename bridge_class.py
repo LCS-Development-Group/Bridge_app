@@ -422,3 +422,57 @@ class Bridge:
     def cmd_set_adv(self, adv:bool=False):
         self.command_queue.put((Bridge_CMDs.SET_ADV, adv))
 
+
+if __name__=="__main__":
+    import argparse
+    parser=argparse.ArgumentParser(description="LCS Chamber Bridge (single channel, CLI only). For GUI run the whole app.")
+    parser.add_argument("port", type=str, help="Serial port (e.g., /dev/ttyUSB0 or COM3)")
+    parser.add_argument("--adv", action="store_true", help="Log raw UART & MQTT JSON traffic to console")
+    parser.add_argument("--silent", action="store_true", help="Disable all forms of messages except errors")
+    args=parser.parse_args()
+
+    bridge=Bridge(channel_id=0)
+    if args.adv:
+        bridge.cmd_set_adv(True)
+
+    silent=False
+    if args.silent:
+        silent=True
+
+    if not silent:
+        print(f"[*] starting on {args.port} (Ctrl+C to stop)")
+
+    bridge.start()
+    bridge.cmd_connect_chamber(args.port)
+
+    try:
+        while True:
+            try:
+                ev_type, val=bridge.event_queue.get(timeout=0.5)
+
+                if not silent:
+                    match ev_type:
+                        case Bridge_EVs.ERROR:
+                            print(f"[ERROR] {val}")
+                        case Bridge_EVs.UART_CON_STATUS:
+                            status_str=val.value if isinstance(val, Bridge_UART_state) else str(val)
+                            print(f"[STATUS] Connection: {status_str}")
+                        case Bridge_EVs.UART_CON_ID:
+                            print(f"[INFO] Chamber ID: {val}")
+                        case Bridge_EVs.UART_TRAFFIC_RECEIVE:
+                            if val:
+                                print(f"[UART RX] {val}")
+                        case Bridge_EVs.MQTT_TRAFFIC_RECEIVE:
+                            if val:
+                                print(f"[MQTT RX] {val}")
+
+                bridge.event_queue.task_done()
+            except queue.Empty:
+                pass
+
+    except KeyboardInterrupt:
+        bridge.cmd_disconnect_chamber()
+        bridge.cmd_stop()
+        time.sleep(0.5)
+        if not silent:
+            print("[*] Stopped")

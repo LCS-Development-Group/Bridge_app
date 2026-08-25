@@ -266,12 +266,17 @@ class Emulator():
 
 
 if __name__=="__main__":
+    import argparse
+
+    parser=argparse.ArgumentParser(description="LCS Chamber Emulator")
+    parser.add_argument("port", type=str, help="Virtual Serial port (e.g., COM3 or /dev/ttyUSB0). Port must belong to a connected pair")
+    parser.add_argument("chamber_id", type=int, help="Chamber ID number")
+    args=parser.parse_args()
+
     try:
-        if len(sys.argv)!=3:
-            print(f"Usage: py ./chamber_emulator.py <Uart_port> <Chamber_ID>")
-        else:
-            emulator=Emulator(sys.argv[1], int(sys.argv[2]))
-            emulator.run()
+
+        emulator=Emulator(args.port, args.chamber_id)
+        emulator.run()
 
     except Exception:
         traceback.print_exc()
