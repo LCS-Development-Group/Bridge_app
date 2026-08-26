@@ -10,6 +10,8 @@ import time
 WATCHDOG_TIME=10.0
 BAUDRATE=115200
 
+DECIMATE_PERIOD=10 # 0 for disable
+
 if os.name.startswith("win"):
     MQTT_BROKER_IP="LCSRP5"
 else:
@@ -46,8 +48,7 @@ def make_handshake_json(code:Handshake_codes) -> dict:
     return {"JT":"hsk", "RQ":code.value}
 
 '''
-REFERENCE
-readings={
+readings_default={
     "JT":"sen",
     "HI":0.0,
     "TI":0.0,
@@ -57,7 +58,7 @@ readings={
     "MV":0.0,
     "MP":0.0,
 }
-regulator_settings={
+regulator_defualt={
     "SP": 25.0,
     "HI": 5.0,
     "EN": "OFF",
@@ -90,9 +91,8 @@ class MQTT_topics:
         self.starter_get=f"chambers/{chamber_id}/starter/get"
         self.starter_set=f"chambers/{chamber_id}/starter/set"
         self.readings=f"chambers/{chamber_id}/readings"
+        self.RHT_graph=f"chambers/{chamber_id}/RHT_graph"
         self.conn_status=f"chambers/{chamber_id}/misc/conn_stat"
-
-
 
 class MQTT_CLient:
     def __init__(self, brige_inst:"Bridge"):
@@ -202,6 +202,8 @@ class Bridge:
         self.sm_rx_timestamp=0.0
 
         self.mqtt=MQTT_CLient(brige_inst=self)
+
+        self.decimate_counter=DECIMATE_PERIOD
 
     def start(self):
         self.cmd_thread.start()
@@ -316,6 +318,7 @@ class Bridge:
                         if not self.mqtt.connect_mqtt(self.chamber_id):
                             self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
                             self.cmd_disconnect_chamber()
+                        self.decimate_counter=DECIMATE_PERIOD
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
@@ -329,6 +332,7 @@ class Bridge:
                         if not self.mqtt.connect_mqtt(self.chamber_id):
                             self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
                             self.cmd_disconnect_chamber()
+                        self.decimate_counter=DECIMATE_PERIOD
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
@@ -353,7 +357,11 @@ class Bridge:
                 #return
             case "sen":
                 if self.cham_connected:
+                    if self.decimate_counter>=DECIMATE_PERIOD:
+                        self.decimate_counter=0
+                        self.mqtt.publish(self.mqtt.topics.RHT_graph, mqtt_payload, retain=False)
                     self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload, retain=False)
+                    self.decimate_counter+=1
             case "sta":
                 if self.cham_connected:
                     self.mqtt.publish(self.mqtt.topics.starter_get, mqtt_payload)
