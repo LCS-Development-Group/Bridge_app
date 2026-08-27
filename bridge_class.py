@@ -10,7 +10,7 @@ import time
 WATCHDOG_TIME=10.0
 BAUDRATE=115200
 
-DECIMATE_PERIOD=10 # 0 for disable
+DECIMATE_PERIOD=5 # 0 for disable
 
 if os.name.startswith("win"):
     MQTT_BROKER_IP="LCSRP5"
@@ -359,7 +359,13 @@ class Bridge:
                 if self.cham_connected:
                     if self.decimate_counter>=DECIMATE_PERIOD:
                         self.decimate_counter=0
-                        self.mqtt.publish(self.mqtt.topics.RHT_graph, mqtt_payload, retain=False)
+
+                        decimated_payload=payload.copy()
+                        decimated_payload["HI"]=round(decimated_payload["HI"], 2)
+                        decimated_payload["TI"]=round(decimated_payload["TI"], 2)
+                        decimated_payload["HE"]=round(decimated_payload["HE"], 2)
+                        decimated_payload["TE"]=round(decimated_payload["TE"], 2)
+                        self.mqtt.publish(self.mqtt.topics.RHT_graph, decimated_payload, retain=False)
                     self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload, retain=False)
                     self.decimate_counter+=1
             case "sta":
