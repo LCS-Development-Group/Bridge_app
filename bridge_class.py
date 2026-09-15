@@ -4,19 +4,18 @@ import json
 import queue
 from enum import Enum
 import paho.mqtt.client as mqtt
-import os
 import time
+import secrets
 
 WATCHDOG_TIME=10.0
 BAUDRATE=115200
 
 DECIMATE_PERIOD=5 # 0 for disable
 
-if os.name.startswith("win"):
-    MQTT_BROKER_IP="LCSRP5"
-else:
-    MQTT_BROKER_IP="LCSRP5.local"#just linux things
 
+
+# MQTT_BROKER_IP="LCSRP5.local"
+MQTT_BROKER_IP="LCSRP5.remote"
 MQTT_BROKER_PORT=1883
 
 class Bridge_UART_state(Enum):
@@ -47,28 +46,8 @@ class Handshake_codes(Enum):
 def make_handshake_json(code:Handshake_codes) -> dict:
     return {"JT":"hsk", "RQ":code.value}
 
-'''
-readings_default={
-    "JT":"sen",
-    "HI":0.0,
-    "TI":0.0,
-    "HE":0.0,
-    "TE":0.0,
-    "MC":0.0,
-    "MV":0.0,
-    "MP":0.0,
-}
-regulator_defualt={
-    "SP": 25.0,
-    "HI": 5.0,
-    "EN": "OFF",
-    "ME": "OFF"
-}
-starter_settings={
-    "SS": "OFF",
-    "LS": "OFF"
-}
-'''
+chamber_default_readings={"HI": None, "TI": None, "HE": None, "TE": None, "MC": 0.0, "MV": 0.0, "MP": 0.0}
+chamber_default_regulator={"SP": 0.0, "HI": 0.0, "EN": None}
 
 CONN_STAT_PAYLOAD={
     "ON":{"CS":"Online"},
@@ -96,7 +75,7 @@ class MQTT_topics:
 
 class MQTT_CLient:
     def __init__(self, brige_inst:"Bridge"):
-        self.client=mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        self.client=mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=f"LCS_bridge_{secrets.token_hex(8)}")
         self.topics=MQTT_topics()
         self.bridge=brige_inst
 
@@ -112,6 +91,10 @@ class MQTT_CLient:
 
             #status LWT
             self.client.will_set(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), qos=1, retain=True)        
+            self.client.will_set(topic=self.topics.readings, payload=json.dumps(chamber_default_readings), qos=1, retain=False)
+            self.client.will_set(topic=self.topics.RHT_graph, payload=json.dumps(chamber_default_readings), qos=1, retain=False)
+            self.client.will_set(topic=self.topics.regulator_get, payload=json.dumps(chamber_default_regulator), qos=1, retain=True)         
+
             self.client.connect(host=MQTT_BROKER_IP, port=MQTT_BROKER_PORT, keepalive=60)
             self.client.loop_start()
 
@@ -125,6 +108,15 @@ class MQTT_CLient:
     def disconnect_mqtt(self):
         try:
             wait=self.client.publish(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), retain=True)
+            wait.wait_for_publish(timeout=0.5)
+
+            wait=self.client.publish(topic=self.topics.readings, payload=json.dumps(chamber_default_readings), retain=False)
+            wait.wait_for_publish(timeout=0.5)
+
+            wait=self.client.publish(topic=self.topics.RHT_graph, payload=json.dumps(chamber_default_readings), retain=False)
+            wait.wait_for_publish(timeout=0.5)
+
+            wait=self.client.publish(topic=self.topics.regulator_get, payload=json.dumps(chamber_default_regulator), retain=False)
             wait.wait_for_publish(timeout=0.5)
 
             if self.client.is_connected():
