@@ -4,7 +4,7 @@ from serial.tools import list_ports
 import queue
 from datetime import datetime
 import custom_Messagebox
-import sys
+
 
 
 DEFAULT_COM_MSG="Select COM"
@@ -27,9 +27,14 @@ COM_exclude_VID=[None, 0x303a]
 
 
 from pathlib import Path
-app_base_path=Path(__file__).resolve().parent
-app_icon_path_ico=f"{app_base_path}/icons/app.ico"
-adv_icon_path_ico=f"{app_base_path}/icons/info.ico"
+import sys
+if getattr(sys, "frozen", False):
+    app_base_path=Path(sys._MEIPASS) # compiled .exe
+else:
+    app_base_path=Path(__file__).resolve().parent # stanalone .pyw
+
+app_icon_path_ico=str(app_base_path/"icons"/"app.ico")
+adv_icon_path_ico=str(app_base_path/"icons"/"info.ico")
 FONTS={}
 
 def set_window_icon(window, icon_path):

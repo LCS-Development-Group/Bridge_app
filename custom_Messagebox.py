@@ -21,11 +21,17 @@ color_tilein="#4D4D4D"
 
 '''icons'''
 from pathlib import Path
+import sys
+if getattr(sys, "frozen", False):
+    app_base_path=Path(sys._MEIPASS) # compiled .exe
+else:
+    app_base_path=Path(__file__).resolve().parent # stanalone .pyw
 app_base_path=Path(__file__).resolve().parent
-ICON_QUESTION=f"{app_base_path}/icons/question.ico"
-ICON_WARNING=f"{app_base_path}/icons/warning.ico"
-ICON_ERROR=f"{app_base_path}/icons/error.ico"
-ICON_INFO=f"{app_base_path}/icons/info.ico"
+
+ICON_QUESTION=str(app_base_path/"icons"/"question.ico")
+ICON_WARNING=str(app_base_path/"icons"/"warning.ico")
+ICON_ERROR=str(app_base_path/"icons"/"error.ico")
+ICON_INFO=str(app_base_path/"icons"/"info.ico")
 
 def set_window_icon(window, icon_path):
     import os
