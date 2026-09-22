@@ -10,12 +10,8 @@ import secrets
 WATCHDOG_TIME=10.0
 BAUDRATE=115200
 
-DECIMATE_PERIOD=5 # 0 for disable
-
-
-
-# MQTT_BROKER_IP="LCSRP5.local"
-MQTT_BROKER_IP="LCSRP5.remote"
+MQTT_BROKER_IP="LCSRP5.local"
+# MQTT_BROKER_IP="LCSRP5.remote"
 MQTT_BROKER_PORT=1883
 
 class Bridge_UART_state(Enum):
@@ -195,8 +191,6 @@ class Bridge:
 
         self.mqtt=MQTT_CLient(brige_inst=self)
 
-        self.decimate_counter=DECIMATE_PERIOD
-
     def start(self):
         self.cmd_thread.start()
         self.uart_thread.start()
@@ -310,7 +304,7 @@ class Bridge:
                         if not self.mqtt.connect_mqtt(self.chamber_id):
                             self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
                             self.cmd_disconnect_chamber()
-                        self.decimate_counter=DECIMATE_PERIOD
+
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
@@ -324,7 +318,7 @@ class Bridge:
                         if not self.mqtt.connect_mqtt(self.chamber_id):
                             self.event_queue.put((Bridge_EVs.ERROR, "MQTT connection error"))
                             self.cmd_disconnect_chamber()
-                        self.decimate_counter=DECIMATE_PERIOD
+
                     else:
                         self.event_queue.put((Bridge_EVs.ERROR, "handshake: no ID"))
 
@@ -349,23 +343,16 @@ class Bridge:
                 #return
             case "sen":
                 if self.cham_connected:
-                    if self.decimate_counter>=DECIMATE_PERIOD:
-                        self.decimate_counter=0
-
-                        decimated_payload=payload.copy()
-                        decimated_payload["HI"]=round(decimated_payload["HI"], 2)
-                        decimated_payload["TI"]=round(decimated_payload["TI"], 2)
-                        decimated_payload["HE"]=round(decimated_payload["HE"], 2)
-                        decimated_payload["TE"]=round(decimated_payload["TE"], 2)
-                        self.mqtt.publish(self.mqtt.topics.RHT_graph, decimated_payload, retain=False)
                     self.mqtt.publish(self.mqtt.topics.readings, mqtt_payload, retain=False)
-                    self.decimate_counter+=1
             case "sta":
                 if self.cham_connected:
                     self.mqtt.publish(self.mqtt.topics.starter_get, mqtt_payload)
             case "reg":
                 if self.cham_connected:
                     self.mqtt.publish(self.mqtt.topics.regulator_get, mqtt_payload)
+            case "dec":
+                if self.cham_connected:
+                    self.mqtt.publish(self.mqtt.topics.RHT_graph, mqtt_payload, retain=False)
             
         if self.adv:
             event_val=json.dumps(payload)
