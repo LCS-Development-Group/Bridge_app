@@ -86,11 +86,7 @@ class MQTT_CLient:
             self.client.message_callback_add(self.topics.starter_set, self.__starter_from_server_cb)
 
             #status LWT
-            self.client.will_set(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), qos=1, retain=True)        
-            self.client.will_set(topic=self.topics.readings, payload=json.dumps(chamber_default_readings), qos=1, retain=False)
-            self.client.will_set(topic=self.topics.RHT_graph, payload=json.dumps(chamber_default_readings), qos=1, retain=False)
-            self.client.will_set(topic=self.topics.regulator_get, payload=json.dumps(chamber_default_regulator), qos=1, retain=True)         
-
+            self.client.will_set(topic=self.topics.conn_status, payload=json.dumps(CONN_STAT_PAYLOAD["OFF"]), qos=1, retain=True)
             self.client.connect(host=MQTT_BROKER_IP, port=MQTT_BROKER_PORT, keepalive=60)
             self.client.loop_start()
 
