@@ -9,7 +9,7 @@ import traceback
 BAUDRATE=115200
 SEND_PERIOD_S=1
 
-from bridge_class import Handshake_codes, make_handshake_json
+from bridge import Handshake_codes, make_handshake_json
 
 readings={
     "JT":"sen",
